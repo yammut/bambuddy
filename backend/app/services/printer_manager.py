@@ -474,6 +474,14 @@ class PrinterManager:
             self._schedule_async(self._persist_awaiting_plate_clear(printer_id, awaiting))
             self._schedule_async(self._broadcast_status_change(printer_id))
             if changed:
+                # Armed here rather than in the emission, which only runs on a
+                # later tick: the completion task must find it already armed.
+                from backend.app.services.plate_clear_prompt import plate_clear_prompts
+
+                if awaiting:
+                    plate_clear_prompts.arm(printer_id)
+                else:
+                    plate_clear_prompts.disarm(printer_id)
                 self._schedule_async(self._emit_plate_clear_change(printer_id, awaiting))
 
     async def _emit_plate_clear_change(self, printer_id: int, awaiting: bool) -> None:
@@ -506,19 +514,19 @@ class PrinterManager:
         except Exception as e:
             logger.warning("Failed to publish plate-clear state for printer %d: %s", printer_id, e)
 
-        # Only the rising edge is worth a notification — "the bed is now free"
-        # is not an action item, and the queue clears the gate by itself.
-        if not awaiting:
+        # The question goes out after the print's other notifications, not here
+        # (plate_clear_prompt). "The bed is now free" is no notification of its
+        # own: the falling edge only takes the buttons off the one already sent.
+        from backend.app.services.plate_clear_prompt import plate_clear_prompts
+
+        if awaiting:
+            plate_clear_prompts.start_fallback(printer_id)
             return
 
         try:
-            from backend.app.core.database import async_session
-            from backend.app.services.notification_service import notification_service
-
-            async with async_session() as db:
-                await notification_service.on_plate_clear_required(printer_id, printer.name, db)
+            await plate_clear_prompts.retire(printer_id)
         except Exception as e:
-            logger.warning("Failed to send plate-clear notification for printer %d: %s", printer_id, e)
+            logger.warning("Failed to retire the plate-clear question for printer %d: %s", printer_id, e)
 
     async def _printer_info_from_db(self, printer_id: int) -> PrinterInfo | None:
         """Name and serial for a printer with no registered client."""

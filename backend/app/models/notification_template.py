@@ -112,6 +112,24 @@ DEFAULT_TEMPLATES = [
         "body_template": "{printer}: print finished. Confirm the build plate is clear before the queue continues.",
     },
     {
+        "event_type": "plate_clear_button",
+        "name": "Plate Clear Button (Telegram)",
+        "title_template": "\u2705 Plate clear",
+        "body_template": "{printer}: the plate was already clear.",
+    },
+    {
+        "event_type": "plate_clear_done",
+        "name": "Plate Cleared (Telegram)",
+        "title_template": "Plate marked as clear",
+        "body_template": "\u2705 Plate cleared at {timestamp}",
+    },
+    {
+        "event_type": "plate_clear_expired",
+        "name": "Plate Clear Button Expired (Telegram)",
+        "title_template": "This button is no longer valid",
+        "body_template": "\u231b This button expired. Clear the plate from Bambuddy.",
+    },
+    {
         "event_type": "filament_low",
         "name": "Filament Low",
         "title_template": "Filament Low",

@@ -25,7 +25,12 @@ from sqlalchemy import delete, select
 
 from backend.app.models.archive import PrintArchive
 from backend.app.models.notification import NotificationProvider, TelegramPendingVerdict
-from backend.app.services.notification_service import _USER_AGENT, telegram_markdown_escape
+from backend.app.services.notification_service import (
+    _USER_AGENT,
+    PLATE_CLEAR_CALLBACK_PREFIX,
+    telegram_markdown_escape,
+)
+from backend.app.services.plate_clear_prompt import plate_clear_prompts
 from backend.app.services.print_confirmation import apply_outcome_verdict
 from backend.app.utils.local_time import utcnow_naive
 
@@ -66,7 +71,9 @@ def _provider_reaction_token(provider: NotificationProvider) -> str | None:
     """Bot token of a provider that should be polled, else None."""
     if provider.provider_type != "telegram" or not provider.enabled:
         return None
-    if (provider.telegram_verdict_mode or "buttons") == "buttons":
+    wants_reactions = (provider.telegram_verdict_mode or "buttons") != "buttons"
+    wants_plate_clear_taps = bool(provider.on_plate_clear_required and provider.plate_clear_button)
+    if not wants_reactions and not wants_plate_clear_taps:
         return None
     config = json.loads(provider.config) if isinstance(provider.config, str) else (provider.config or {})
     token = str(config.get("bot_token") or "").strip()
@@ -230,7 +237,7 @@ class TelegramReactionPoller:
         (409 webhook or second poller; 401/404 bad or deleted bot token) that
         are surfaced on the providers and cooled down instead of retried.
         """
-        params: dict = {"timeout": GET_UPDATES_TIMEOUT, "allowed_updates": ["message_reaction"]}
+        params: dict = {"timeout": GET_UPDATES_TIMEOUT, "allowed_updates": ["message_reaction", "callback_query"]}
         offset = self._offsets.get(bot_token)
         if offset is not None:
             params["offset"] = offset + 1
@@ -269,6 +276,10 @@ class TelegramReactionPoller:
             update_id = update.get("update_id")
             if isinstance(update_id, int):
                 self._offsets[bot_token] = max(self._offsets.get(bot_token, update_id), update_id)
+            callback_query = update.get("callback_query")
+            if isinstance(callback_query, dict):
+                await self._handle_callback_query(bot_token, callback_query)
+                continue
             reaction = update.get("message_reaction")
             if not isinstance(reaction, dict):
                 continue
@@ -336,6 +347,36 @@ class TelegramReactionPoller:
         logger.info("[#3046] Telegram reaction marked archive %s as '%s'", archive_id, verdict)
         await self._confirm_on_message(bot_token, chat_id, message_id, has_caption, text, verdict)
 
+    async def _handle_callback_query(self, bot_token: str, query: dict):
+        """A tap on the plate-clear button. Other inline buttons are not ours to answer."""
+        data = query.get("data") or ""
+        query_id = query.get("id")
+        if not data.startswith(PLATE_CLEAR_CALLBACK_PREFIX) or not query_id:
+            return
+        message = query.get("message") or {}
+        chat_id = str((message.get("chat") or {}).get("id", "")).strip()
+        message_id = message.get("message_id")
+        text = None
+        try:
+            text = await plate_clear_prompts.handle_tap(
+                bot_token,
+                self._providers.get(bot_token, set()),
+                data.removeprefix(PLATE_CLEAR_CALLBACK_PREFIX),
+                chat_id,
+                message_id if isinstance(message_id, int) else None,
+            )
+        except Exception as e:
+            logger.warning("Plate-clear button for %s could not be handled: %s", _bot_label(bot_token), e)
+        # Always answered: Telegram keeps the button spinning until it is.
+        payload = {"callback_query_id": query_id}
+        if text:
+            payload["text"] = text
+        try:
+            client = await self._get_client()
+            await client.post(f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery", json=payload)
+        except Exception as e:
+            logger.warning("answerCallbackQuery failed for %s: %s", _bot_label(bot_token), type(e).__name__)
+
     async def _confirm_on_message(
         self, bot_token: str, chat_id: str, message_id: int, has_caption: bool, text: str | None, verdict: str
     ):
@@ -382,7 +423,11 @@ class TelegramReactionPoller:
             logger.warning("Telegram confirmation edit failed: %s", e)
 
     async def prune_stale(self):
-        """Forget prompts nobody reacted to within a week."""
+        """Forget prompts nobody reacted to within a week, and expire plate-clear buttons."""
+        try:
+            await plate_clear_prompts.expire_stale()
+        except Exception as e:
+            logger.warning("Could not expire plate-clear buttons: %s", e)
         async with self._sessions()() as db:
             await db.execute(
                 delete(TelegramPendingVerdict).where(TelegramPendingVerdict.created_at < utcnow_naive() - PENDING_TTL)

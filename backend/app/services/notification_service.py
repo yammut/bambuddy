@@ -5,6 +5,7 @@ import html
 import json
 import logging
 import re
+import secrets
 import smtplib
 from datetime import datetime, timedelta, timezone
 from email.mime.image import MIMEImage
@@ -14,7 +15,7 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.archive import PrintArchive
@@ -22,10 +23,12 @@ from backend.app.models.notification import (
     NotificationDigestQueue,
     NotificationLog,
     NotificationProvider,
+    PlateClearPrompt,
     TelegramPendingVerdict,
 )
 from backend.app.models.notification_template import NotificationTemplate
 from backend.app.services.print_confirmation import one_tap_url
+from backend.app.utils.local_time import utcnow_naive
 from backend.app.utils.notification_photos import save_notification_photo
 
 logger = logging.getLogger(__name__)
@@ -40,6 +43,12 @@ _USER_AGENT = "Bambuddy/1.0 (+https://github.com/maziggy/bambuddy)"
 # Appended to a Telegram outcome prompt in reaction mode (#3046); the message
 # itself carries no buttons there, so the user needs telling how to answer.
 TELEGRAM_REACTION_HINT = "React with \U0001f44d or \U0001f44e to record the outcome."
+
+# callback_data of the plate-clear button, in front of its token. The poller
+# leaves callbacks without this prefix alone.
+PLATE_CLEAR_CALLBACK_PREFIX = "plate_clear:"
+# How long a plate-clear button stays usable. The gate itself has no expiry.
+PLATE_CLEAR_BUTTON_TTL = timedelta(days=7)
 
 
 def telegram_markdown_escape(message: str) -> str:
@@ -809,6 +818,58 @@ class NotificationService:
             await db.rollback()
         return ok, status
 
+    async def _send_telegram_plate_clear(
+        self,
+        provider: NotificationProvider,
+        config: dict,
+        message: str,
+        db: AsyncSession,
+        printer_id: int,
+        printer_name: str,
+    ) -> tuple[bool, str]:
+        """Send the plate-clear question with a button that releases the plate.
+
+        A callback button rather than a link: the tap goes through Telegram to
+        the poller, so it works with no external_url and no route to this host.
+        """
+        token = secrets.token_urlsafe(16)
+        label, _ = await self._build_message_from_template(db, "plate_clear_button", {"printer": printer_name})
+        ok, status, sent = await self._send_telegram_message(
+            config,
+            message,
+            buttons=[{"text": label, "callback_data": f"{PLATE_CLEAR_CALLBACK_PREFIX}{token}"}],
+            link_preview=False,
+        )
+        if not ok:
+            return ok, status
+        message_id = (sent or {}).get("message_id")
+        if not isinstance(message_id, int) or message_id <= 0:
+            logger.warning("Telegram did not return a message_id for the plate-clear question")
+            return ok, status
+        try:
+            await db.execute(
+                delete(PlateClearPrompt).where(
+                    PlateClearPrompt.provider_id == provider.id, PlateClearPrompt.printer_id == printer_id
+                )
+            )
+            db.add(
+                PlateClearPrompt(
+                    provider_id=provider.id,
+                    printer_id=printer_id,
+                    token=token,
+                    chat_id=str(((sent or {}).get("chat") or {}).get("id") or config.get("chat_id", "")).strip(),
+                    message_id=message_id,
+                    message_text=message,
+                    expires_at=utcnow_naive() + PLATE_CLEAR_BUTTON_TTL,
+                )
+            )
+            await db.commit()
+        except Exception as e:
+            # The question went out; a button we can't match answers "not valid".
+            logger.warning("Failed to record the Telegram plate-clear question: %s", e)
+            await db.rollback()
+        return ok, status
+
     async def _send_email(
         self,
         config: dict,
@@ -1344,6 +1405,21 @@ class NotificationService:
                         image_data,
                         tg_buttons,
                         _archive_id if isinstance(_archive_id, int) else None,
+                    )
+                _plate_printer_id = (variables or {}).get("printer_id")
+                if (
+                    event_type == "plate_clear_required"
+                    and provider.plate_clear_button
+                    and db is not None
+                    and isinstance(_plate_printer_id, int)
+                ):
+                    return await self._send_telegram_plate_clear(
+                        provider,
+                        config,
+                        f"*{title}*\n{message}",
+                        db,
+                        _plate_printer_id,
+                        (variables or {}).get("printer", ""),
                     )
                 # Every other event keeps Telegram's link preview, for the same
                 # reason as the Slack unfurl in _send_webhook: when the finish
@@ -2071,14 +2147,14 @@ class NotificationService:
         print starts. This one fires on the rising edge of the Bambuddy-side
         awaiting-plate-clear flag, i.e. whenever a print reaches a terminal state
         and the next queued job can't dispatch until someone confirms the bed is
-        free. Off by default on every provider: it lands at the same moment as the
-        print-complete notification, so opting in is a deliberate choice.
+        free. Off by default on every provider. Sent by plate_clear_prompt, after
+        the print's other notifications, so that it is the last one to arrive.
         """
         providers = await self._get_providers_for_event(db, "on_plate_clear_required", printer_id)
         if not providers:
             return
 
-        variables = {"printer": printer_name}
+        variables = {"printer": printer_name, "printer_id": printer_id}
 
         title, message = await self._build_message_from_template(db, "plate_clear_required", variables)
         await self._send_to_providers(

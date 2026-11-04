@@ -380,7 +380,7 @@ class TestPoller:
         await poller.poll_once(BOT_TOKEN)
         call = poller._http_client.calls[0]
         assert call["url"] == f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
-        assert call["json"] == {"timeout": 50, "allowed_updates": ["message_reaction"], "offset": 42}
+        assert call["json"] == {"timeout": 50, "allowed_updates": ["message_reaction", "callback_query"], "offset": 42}
 
     @pytest.mark.asyncio
     @pytest.mark.integration

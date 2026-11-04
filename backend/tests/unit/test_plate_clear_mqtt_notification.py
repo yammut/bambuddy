@@ -192,18 +192,21 @@ class TestEmitFanOut:
 
         publish = AsyncMock()
         notify = AsyncMock()
+        fallback = MagicMock()
         with (
             patch("backend.app.services.mqtt_relay.mqtt_relay.on_plate_clear_state", publish),
             patch(
                 "backend.app.services.notification_service.notification_service.on_plate_clear_required",
                 notify,
             ),
+            patch("backend.app.services.plate_clear_prompt.plate_clear_prompts.start_fallback", fallback),
         ):
             await manager._emit_plate_clear_change(7, True)
 
         publish.assert_awaited_once_with(7, "X1C", "01P00A000000001", True)
-        assert notify.await_count == 1
-        assert notify.await_args.args[:2] == (7, "X1C")
+        # The question itself waits for the print's other notifications (plate_clear_prompt).
+        notify.assert_not_awaited()
+        fallback.assert_called_once_with(7)
 
     @pytest.mark.asyncio
     async def test_falling_edge_publishes_but_does_not_notify(self):
@@ -212,17 +215,20 @@ class TestEmitFanOut:
 
         publish = AsyncMock()
         notify = AsyncMock()
+        retire = AsyncMock()
         with (
             patch("backend.app.services.mqtt_relay.mqtt_relay.on_plate_clear_state", publish),
             patch(
                 "backend.app.services.notification_service.notification_service.on_plate_clear_required",
                 notify,
             ),
+            patch("backend.app.services.plate_clear_prompt.plate_clear_prompts.retire", retire),
         ):
             await manager._emit_plate_clear_change(7, False)
 
         publish.assert_awaited_once_with(7, "X1C", "01P00A000000001", False)
         notify.assert_not_awaited()
+        retire.assert_awaited_once_with(7)
 
     @pytest.mark.asyncio
     async def test_unknown_printer_is_a_no_op(self):
@@ -259,17 +265,14 @@ class TestEmitFanOut:
         manager = PrinterManager()
         manager._printer_info[7] = SimpleNamespace(name="X1C", serial_number="01P00A000000001")
 
-        notify = AsyncMock()
+        fallback = MagicMock()
         with (
             patch(
                 "backend.app.services.mqtt_relay.mqtt_relay.on_plate_clear_state",
                 AsyncMock(side_effect=RuntimeError("broker down")),
             ),
-            patch(
-                "backend.app.services.notification_service.notification_service.on_plate_clear_required",
-                notify,
-            ),
+            patch("backend.app.services.plate_clear_prompt.plate_clear_prompts.start_fallback", fallback),
         ):
             await manager._emit_plate_clear_change(7, True)
 
-        assert notify.await_count == 1
+        fallback.assert_called_once_with(7)

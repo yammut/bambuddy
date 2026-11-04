@@ -2,6 +2,14 @@
 
 All notable changes to Bambuddy will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+- **The plate-clear notification is now the last message of a finished print** — It used to go out the moment the print ended, ahead of the print-complete notification, the finish photo and the outcome prompt. It now follows them, without waiting for the outcome to be answered, and goes out anyway after 120 seconds if those notifications never finish. It is only sent while **Require plate-clear confirmation** is on: with that setting off the queue does not wait, and the message said it did.
+
+### Added
+- **Release the plate from Telegram** — A new **Plate-clear button** option on Telegram providers puts a button on that message. A tap releases the plate, the same as the button on the printer card, with no external URL or route to Bambuddy needed: the tap reaches Bambuddy through the same bot polling as outcome reactions. The button is single-use, expires after 7 days, only counts from the provider's configured chat, and disappears from the message once the plate is released by any path. It is off by default because polling takes over the bot: use a bot only Bambuddy uses, as another application polling the same bot stops receiving its updates. In a group chat, any member can tap it. Its texts are editable notification templates.
+
 ## [1.2.5.7] - 2026-10-02
 
 ### Added

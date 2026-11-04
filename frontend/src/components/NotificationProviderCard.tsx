@@ -332,6 +332,19 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   />
                 </div>
 
+                {provider.provider_type === 'telegram' && provider.on_plate_clear_required && (
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-white">{t('notifications.plateClearButton')}</p>
+                      <p className="text-xs text-bambu-gray">{t('notifications.plateClearButtonDescription')}</p>
+                    </div>
+                    <Toggle
+                      checked={provider.plate_clear_button ?? false}
+                      onChange={(checked) => updateMutation.mutate({ plate_clear_button: checked })}
+                    />
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-white">{t('notifications.printConfirmRequest')}</p>

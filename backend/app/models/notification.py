@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from backend.app.core.database import Base
@@ -105,6 +105,10 @@ class NotificationProvider(Base):
     on_plate_not_empty = Column(Boolean, default=True)  # Objects detected on plate before print
     # Off by default: fires after every print, alongside the print-complete alert (#2525)
     on_plate_clear_required = Column(Boolean, default=False)  # Print ended, queue gated until plate is confirmed clear
+    # Telegram only: put a button on that message that releases the plate from
+    # the chat. Off by default because it makes Bambuddy poll the bot, which a
+    # bot shared with another application does not survive (see telegram_reactions).
+    plate_clear_button = Column(Boolean, default=False)
 
     # Print asked for an outcome verdict (#1898). Defaults ON: it only ever
     # fires for prints where the user opted in per-job, so the provider-level
@@ -165,6 +169,7 @@ class NotificationProvider(Base):
     # ORM-level cascade like the two above: SQLite ships with foreign keys
     # off, so the column's ON DELETE CASCADE alone would leave rows behind.
     pending_verdicts = relationship("TelegramPendingVerdict", back_populates="provider", cascade="all, delete-orphan")
+    plate_clear_prompts = relationship("PlateClearPrompt", back_populates="provider", cascade="all, delete-orphan")
 
 
 class TelegramPendingVerdict(Base):
@@ -197,3 +202,29 @@ class TelegramPendingVerdict(Base):
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     provider = relationship("NotificationProvider", back_populates="pending_verdicts")
+
+
+class PlateClearPrompt(Base):
+    """A sent Telegram plate-clear question whose button can still be tapped.
+
+    Deleted when the gate comes down by any path, when the button is used and
+    when it expires. One per provider and printer: the gate only rises again
+    after it came down.
+    """
+
+    __tablename__ = "plate_clear_prompts"
+    __table_args__ = (UniqueConstraint("provider_id", "printer_id", name="uq_plate_clear_prompts_provider_printer"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    provider_id = Column(Integer, ForeignKey("notification_providers.id", ondelete="CASCADE"), nullable=False)
+    printer_id = Column(Integer, ForeignKey("printers.id", ondelete="CASCADE"), nullable=False)
+    # Goes out as the button's callback_data.
+    token = Column(String(64), nullable=False, unique=True, index=True)
+    chat_id = Column(String(64), nullable=False)
+    message_id = Column(Integer, nullable=False)
+    # What we sent, so the edit can append to it: updates do not carry it reliably.
+    message_text = Column(Text, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    provider = relationship("NotificationProvider", back_populates="plate_clear_prompts")

@@ -3046,6 +3046,7 @@ export interface NotificationProvider {
   // Build plate detection
   on_plate_not_empty: boolean;
   on_plate_clear_required: boolean;
+  plate_clear_button: boolean;
   // Post-print outcome confirmation (#1898)
   on_print_confirm_request: boolean;
   telegram_verdict_mode: TelegramVerdictMode;
@@ -3115,6 +3116,7 @@ export interface NotificationProviderCreate {
   // Build plate detection
   on_plate_not_empty?: boolean;
   on_plate_clear_required?: boolean;
+  plate_clear_button?: boolean;
   // Post-print outcome confirmation (#1898)
   on_print_confirm_request?: boolean;
   telegram_verdict_mode?: TelegramVerdictMode;
@@ -3177,6 +3179,7 @@ export interface NotificationProviderUpdate {
   // Build plate detection
   on_plate_not_empty?: boolean;
   on_plate_clear_required?: boolean;
+  plate_clear_button?: boolean;
   // Post-print outcome confirmation (#1898)
   on_print_confirm_request?: boolean;
   telegram_verdict_mode?: TelegramVerdictMode;

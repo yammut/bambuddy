@@ -5081,6 +5081,14 @@ async def run_migrations(conn):
     await _safe_execute(
         conn, "ALTER TABLE notification_providers ADD COLUMN telegram_verdict_mode VARCHAR(16) DEFAULT 'buttons'"
     )
+    # Migration: Telegram plate-clear button. Off by default, as polling a bot
+    # is something to opt into. Its table is new, so create_all() builds it.
+    # Postgres rejects `DEFAULT 0` for BOOLEAN.
+    await _safe_execute(
+        conn,
+        "ALTER TABLE notification_providers ADD COLUMN plate_clear_button BOOLEAN DEFAULT "
+        + ("0" if is_sqlite() else "false"),
+    )
     await _safe_execute(
         conn,
         """

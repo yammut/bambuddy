@@ -87,6 +87,7 @@ def _provider_to_dict(provider: NotificationProvider) -> dict:
         # Build plate detection
         "on_plate_not_empty": provider.on_plate_not_empty,
         "on_plate_clear_required": provider.on_plate_clear_required,
+        "plate_clear_button": bool(provider.plate_clear_button),
         # Post-print outcome confirmation (#1898)
         "on_print_confirm_request": provider.on_print_confirm_request,
         # Rows from before #3046 hold NULL here; "buttons" is what they did.
@@ -186,6 +187,7 @@ async def create_notification_provider(
         # Build plate detection
         on_plate_not_empty=provider_data.on_plate_not_empty,
         on_plate_clear_required=provider_data.on_plate_clear_required,
+        plate_clear_button=provider_data.plate_clear_button,
         # Post-print outcome confirmation (#1898)
         on_print_confirm_request=provider_data.on_print_confirm_request,
         telegram_verdict_mode=provider_data.telegram_verdict_mode,

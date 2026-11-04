@@ -84,6 +84,10 @@ class NotificationProviderBase(BaseModel):
     on_plate_clear_required: bool = Field(
         default=False, description="Notify when a finished print is waiting for plate-clear confirmation"
     )
+    plate_clear_button: bool = Field(
+        default=False,
+        description="Telegram only: add a button to that notification that releases the plate from the chat",
+    )
 
     # Event triggers - Post-print outcome confirmation (#1898)
     on_print_confirm_request: bool = Field(
@@ -205,6 +209,7 @@ class NotificationProviderUpdate(BaseModel):
     # Event triggers - Build plate detection
     on_plate_not_empty: bool | None = None
     on_plate_clear_required: bool | None = None
+    plate_clear_button: bool | None = None
 
     # Event triggers - Post-print outcome confirmation (#1898)
     on_print_confirm_request: bool | None = None

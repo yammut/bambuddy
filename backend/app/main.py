@@ -115,6 +115,7 @@ from backend.app.services.mqtt_relay import mqtt_relay
 from backend.app.services.mqtt_smart_plug import mqtt_smart_plug_service
 from backend.app.services.notification_service import notification_service
 from backend.app.services.obico_detection import obico_detection_service
+from backend.app.services.plate_clear_prompt import plate_clear_prompts
 from backend.app.services.print_cost_estimate import plate_scoped_run_estimate as _plate_scoped_run_estimate
 from backend.app.services.print_scheduler import scheduler as print_scheduler
 from backend.app.services.print_storage import (
@@ -7639,6 +7640,7 @@ async def on_print_complete(printer_id: int, data: dict):
                     logger.info("[NOTIFY-BG] Completed (no-archive path)")
             except Exception as e:
                 logger.warning("[NOTIFY-BG] Failed to send notification without archive: %s", e, exc_info=True)
+            await plate_clear_prompts.send_after_print_end(printer_id)
 
         spawn_background_task(_notify_no_archive(), name="notify-no-archive")
         return
@@ -8448,6 +8450,8 @@ async def on_print_complete(printer_id: int, data: dict):
             await _background_notifications(finish_photo)
         except Exception as e:
             logger.error("[PHOTO-NOTIFY] Notification sending failed: %s", e, exc_info=True)
+        # After everything above, including the outcome prompt: it is the last message.
+        await plate_clear_prompts.send_after_print_end(printer_id)
 
     spawn_background_task(_photo_then_notify(), name="photo-then-notify")
 
